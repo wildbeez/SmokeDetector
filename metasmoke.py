@@ -433,3 +433,23 @@ class Metasmoke:
         response = requests.get(GlobalVars.metasmoke_host + '/api/v2.0/posts/urls', params=payload).json()
 
         return response['items']
+
+    @staticmethod
+    def get_active_smokeys():
+        if not GlobalVars.metasmoke_key:
+            return None
+
+        payload = {
+            'key': GlobalVars.metasmoke_key,
+            'filter': 'HKHMLJKHOFNLGLOFNN',  # smoke_detectors.[id,last_ping,name,is_standby]
+        }
+
+        response = requests.get(GlobalVars.metasmoke_host + '/api/v2.0/smokeys', params=payload).json()
+
+        active = []
+
+        for smokey in response['items']:
+            if smokey['status_color'] is 'good' and not smokey['is_standby']:
+                active.append(smokey['name'])
+
+        return active

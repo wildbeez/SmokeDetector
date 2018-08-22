@@ -17,6 +17,8 @@ if 'windows' in str(platform.platform()).lower():
 else:
     from sh import git
 
+from metasmoke import Metasmoke
+
 from helpers import log
 from globalvars import GlobalVars
 from blacklists import *
@@ -40,6 +42,13 @@ class GitManager:
 
         if item_to_blacklist == "":
             return (False, 'GitManager: item_to_blacklist is not defined. Blame a developer.')
+
+        if not metasmoke_down:
+            active_smokeys = Metasmoke.get_active_smokeys()
+
+            if active_smokeys and len(active_smokeys) > 1:
+                return (False, 'There is more than one active SmokeDetector instance, we cannot safely process the request.'
+                               ' Active SmokeDetector instances are: {}'.format(', '.join(active_smokeys)))
 
         item_to_blacklist = item_to_blacklist.replace("\\s", " ")
 
@@ -187,6 +196,13 @@ class GitManager:
                               "If you are a code admin, then wait for MS to be back up before running this command."
             else:
                 return False, "Ask a code admin to run that for you. Use `!!/whois code_admin` to find out who's here."
+
+        if not metasmoke_down:
+            active_smokeys = Metasmoke.get_active_smokeys()
+
+            if active_smokeys and len(active_smokeys) > 1:
+                return (False, 'There is more than one active SmokeDetector instance, we cannot safely process the request.'
+                               ' Active SmokeDetector instances are: {}'.format(', '.join(active_smokeys)))
 
         try:
             cls.gitmanager_lock.acquire()
