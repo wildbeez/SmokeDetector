@@ -441,15 +441,13 @@ class Metasmoke:
 
         payload = {
             'key': GlobalVars.metasmoke_key,
-            'filter': 'HKHMLJKHOFNLGLOFNN',  # smoke_detectors.[id,last_ping,name,is_standby]
+            'filter': 'HIJMKFGIFKMLLNMGFJ',  # smoke_detectors.[id,last_ping,location,is_standby]
+            'per_page': 100  # Make sure we get all the possible Smokey instances from MS, we'll filter later.
         }
 
         response = requests.get(GlobalVars.metasmoke_host + '/api/v2.0/smokeys', params=payload).json()
 
-        active = []
-
-        for smokey in response['items']:
-            if smokey['status_color'] is 'good' and not smokey['is_standby']:
-                active.append(smokey['name'])
+        active = [item['location'] for item in response['items'] if
+                  item['status_color'] == 'good' and not item['is_standby']]
 
         return active
