@@ -39,6 +39,7 @@ def _get_active_smokeys_from_metasmoke():
 
     return active
 
+
 # noinspection PyRedundantParentheses,PyClassHasNoInit,PyBroadException
 class GitManager:
     gitmanager_lock = Lock()
