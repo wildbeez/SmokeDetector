@@ -17,12 +17,27 @@ if 'windows' in str(platform.platform()).lower():
 else:
     from sh import git
 
-from metasmoke import Metasmoke
-
 from helpers import log
 from globalvars import GlobalVars
 from blacklists import *
 
+
+def _get_active_smokeys_from_metasmoke():
+    if not GlobalVars.metasmoke_key:
+        return None
+
+    payload = {
+        'key': GlobalVars.metasmoke_key,
+        'filter': 'HIJMKFGIFKMLLNMGFJ',  # smoke_detectors.[id,last_ping,location,is_standby]
+        'per_page': 100  # Make sure we get all the possible Smokey instances from MS, we'll filter later.
+    }
+
+    response = requests.get(GlobalVars.metasmoke_host + '/api/v2.0/smokeys', params=payload).json()
+
+    active = [item['location'] for item in response['items'] if
+              item['status_color'] == 'good' and not item['is_standby']]
+
+    return active
 
 # noinspection PyRedundantParentheses,PyClassHasNoInit,PyBroadException
 class GitManager:
@@ -44,11 +59,11 @@ class GitManager:
             return (False, 'GitManager: item_to_blacklist is not defined. Blame a developer.')
 
         if not metasmoke_down:
-            active_smokeys = Metasmoke.get_active_smokeys()
+            active_smokeys = _get_active_smokeys_from_metasmoke()
 
             if active_smokeys and len(active_smokeys) > 1:
-                return (False, 'There is more than one active SmokeDetector instance, we cannot safely process the request.'
-                               ' Active SmokeDetector instances are: {}'.format(', '.join(active_smokeys)))
+                return (False, 'There is more than one active SmokeDetector instance, we cannot safely process '
+                               'the request. Active SmokeDetector instances are: {}'.format(', '.join(active_smokeys)))
 
         item_to_blacklist = item_to_blacklist.replace("\\s", " ")
 
@@ -201,8 +216,8 @@ class GitManager:
             active_smokeys = Metasmoke.get_active_smokeys()
 
             if active_smokeys and len(active_smokeys) > 1:
-                return (False, 'There is more than one active SmokeDetector instance, we cannot safely process the request.'
-                               ' Active SmokeDetector instances are: {}'.format(', '.join(active_smokeys)))
+                return (False, 'There is more than one active SmokeDetector instance, we cannot safely process the '
+                               'request. Active SmokeDetector instances are: {}'.format(', '.join(active_smokeys)))
 
         try:
             cls.gitmanager_lock.acquire()
