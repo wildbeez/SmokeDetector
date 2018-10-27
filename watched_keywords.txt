@@ -5649,7 +5649,6 @@
 1537457128	Makyen	escortbeirut\.info
 1537457136	Makyen	stake\.com
 1537457144	Makyen	bkIQCeYS5NE(?#YouTube video)
-1537463166	Glorfindel	investmentnovel\.com
 1537477967	Makyen	joshua\.dp\.lloyd(?:@gmail\.com)?
 1537490822	Tetsuya Yamamoto	eijazah\.com
 1537500813	Tetsuya Yamamoto	qxorm\.com
@@ -6365,3 +6364,4 @@
 1540645782	iBug	alisadv\.com
 1540646535	Erik the Outgolfer	hihindi\,com
 1540655156	iBug	monivo\.com
+1540662886	Makyen	 (?:info@)?interventionmortgagefirm\.org
