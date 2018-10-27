@@ -1,4 +1,4 @@
-git+https://github.com/ArtOfCode-/ChatExchange.git@271f8390284e20206c1c73199615ef63efc0238c
+stackl~=0.0.5
 pbs>=0.110
 packaging>=16.8
 appdirs>=1.4.3

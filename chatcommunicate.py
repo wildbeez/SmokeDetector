@@ -1,7 +1,5 @@
-from chatexchange import events
-from chatexchange.browser import LoginError
-from chatexchange.messages import Message
-from chatexchange_extension import Client
+import stackl
+from stackl.models import Room, Message
 import collections
 import itertools
 import os
@@ -42,11 +40,7 @@ class CmdException(Exception):
 _prefix_commands = {}
 _reply_commands = {}
 
-_clients = {
-    "stackexchange.com": None,
-    "stackoverflow.com": None,
-    "meta.stackexchange.com": None
-}
+_client = None
 
 _command_rooms = set()
 _watcher_rooms = set()
@@ -62,45 +56,23 @@ _pickle_run = threading.Event()
 
 
 def init(username, password, try_cookies=True):
-    global _clients
+    global _client
     global _rooms
     global _room_data
     global _last_messages
 
-    for site in _clients.keys():
-        client = Client(site)
-        logged_in = False
+    client = stackl.ChatClient()
+    client.login(username, password, servers=['stackexchange.com', 'meta.stackexchange.com', 'stackoverflow.com'],
+                 cookie_file='cookies.p')
+    _client = client
 
-        if try_cookies:
-            if GlobalVars.cookies is None:
-                datahandling._remove_pickle("cookies.p")
-                GlobalVars.cookies = {}
-            else:
-                cookies = GlobalVars.cookies
-                try:
-                    if site in cookies and cookies[site] is not None:
-                        client.login_with_cookie(cookies[site])
-                        logged_in = True
-                        log('debug', 'Logged in using cached cookies')
-                except LoginError as e:
-                    exc_type, exc_obj, exc_tb = sys.exc_info()
-                    log('debug', 'Login error {}: {}'.format(exc_type.__name__, exc_obj))
-                    log('debug', 'Falling back to credential-based login')
-                    del cookies[site]
-                    datahandling.dump_cookies()
+    def handler(event, _server):
+        if event.shorthand not in ['message', 'edit']:
+            return
 
-        if not logged_in:
-            for retry in range(3):
-                try:
-                    GlobalVars.cookies[site] = client.login(username, password)
-                    break
-                except Exception as e:
-                    exc_type, exc_obj, exc_tb = sys.exc_info()
-                    log('debug', 'Login error {}: {}'.format(exc_type.__name__, exc_obj))
-            else:
-                raise Exception("Failed to log into " + site + ", max retries exceeded")
+        on_msg(event)
 
-        _clients[site] = client
+    client.add_handler(handler)
 
     if os.path.exists("rooms_custom.yml"):
         parse_room_config("rooms_custom.yml")
@@ -124,12 +96,12 @@ def init(username, password, try_cookies=True):
 
 
 def join_command_rooms():
-    for site, roomid in _command_rooms:
-        room = _clients[site].get_room(roomid)
-        deletion_watcher = (site, roomid) in _watcher_rooms
+    global _client
 
-        room.join()
-        room.watch_socket(on_msg)
+    for site, roomid in _command_rooms:
+        room = Room(site, room_id=roomid)
+        deletion_watcher = (site, roomid) in _watcher_rooms
+        _client.join(roomid, site)
         _rooms[(site, roomid)] = RoomData(room, -1, deletion_watcher)
 
 
@@ -170,6 +142,8 @@ def pickle_last_messages():
 
 
 def send_messages():
+    global _client
+
     while True:
         room, msg, report_data = _msg_queue.get()
         if len(msg) > 500 and "\n" not in msg:
@@ -182,34 +156,34 @@ def send_messages():
 
         while full_retries < 3:
             try:
-                response = room.room._client._do_action_despite_throttling(("send", room.room.id, msg)).json()
+                message = _client.send(msg, room=room.room, server=room.room.server)
 
-                if "id" in response:
-                    identifier = (room.room._client.host, room.room.id)
-                    message_id = response["id"]
+                identifier = (room.room.server, room.room.id)
+                message_id = message.id
 
-                    if identifier not in _last_messages.messages:
-                        _last_messages.messages[identifier] = collections.deque((message_id,))
-                    else:
-                        last = _last_messages.messages[identifier]
+                if identifier not in _last_messages.messages:
+                    _last_messages.messages[identifier] = collections.deque((message_id,))
+                else:
+                    last = _last_messages.messages[identifier]
 
-                        if len(last) > 100:
-                            last.popleft()
+                    if len(last) > 100:
+                        last.popleft()
 
-                        last.append(message_id)
+                    last.append(message_id)
 
-                    if report_data:
-                        _last_messages.reports[(room.room._client.host, message_id)] = report_data
+                if report_data:
+                    _last_messages.reports[(room.room.server, message_id)] = report_data
 
-                        if len(_last_messages.reports) > 50:
-                            _last_messages.reports.popitem(last=False)
+                    if len(_last_messages.reports) > 50:
+                        _last_messages.reports.popitem(last=False)
 
-                        if room.deletion_watcher:
-                            callback = room.room._client.get_message(message_id).delete
+                    if room.deletion_watcher:
+                        def callback():
+                            _client.delete(room.room.server, message_id)
 
-                            GlobalVars.deletion_watcher.subscribe(report_data[0], callback=callback, timeout=120)
+                        GlobalVars.deletion_watcher.subscribe(report_data[0], callback=callback, timeout=120)
 
-                    _pickle_run.set()
+                _pickle_run.set()
 
                 break
             except requests.exceptions.HTTPError:
@@ -218,26 +192,24 @@ def send_messages():
         _msg_queue.task_done()
 
 
-def on_msg(msg, client):
+def on_msg(evt):
     global _room_roles
 
-    if not isinstance(msg, events.MessagePosted) and not isinstance(msg, events.MessageEdited):
+    message = evt.message
+    if message.user.id == _client.id(evt.server):
         return
 
-    message = msg.message
-    if message.owner.id == client._br.user_id:
-        return
     if message.content.startswith("<div class='partial'>"):
         message.content = message.content[21:]
         if message.content.endswith("</div>"):
             message.content = message.content[:-6]
 
-    room_ident = (client.host, message.room.id)
+    room_ident = (evt.server, message.room.id)
     room_data = _rooms[room_ident]
 
-    if message.parent:
+    if message.parent is not None:
         try:
-            if message.parent.owner.id == client._br.user_id:
+            if message.parent.user.id == _client.id(evt.server):
                 strip_mention = regex.sub("^(<span class=(\"|')mention(\"|')>)?@.*?(</span>)? ", "", message.content)
                 cmd = GlobalVars.parser.unescape(strip_mention)
 
@@ -262,7 +234,8 @@ def on_msg(msg, client):
             ids, expires_in = datahandling.last_feedbacked
 
             if time.time() < expires_in:
-                Tasks.do(metasmoke.Metasmoke.post_auto_comment, message.content_source, message.owner, ids=ids)
+                Tasks.do(metasmoke.Metasmoke.post_auto_comment, message.content_source(client=_client),
+                         message.owner, ids=ids)
     elif 'direct' in _room_roles and room_ident in _room_roles['direct']:
         SocketScience.receive(message.content_source.replace("\u200B", "").replace("\u200C", ""))
 
@@ -294,8 +267,8 @@ def tell_rooms(msg, has, hasnt, notify_site="", report_data=None):
                     site, roomid = room
                     deletion_watcher = room in _watcher_rooms
 
-                    new_room = _clients[site].get_room(roomid)
-                    new_room.join()
+                    new_room = Room(site, room_id=roomid)
+                    _client.join(site, room=new_room)
 
                     _rooms[room] = RoomData(new_room, -1, deletion_watcher)
 
@@ -332,29 +305,29 @@ def tell_rooms(msg, has, hasnt, notify_site="", report_data=None):
 
 
 def get_last_messages(room, count):
-    identifier = (room._client.host, room.id)
+    identifier = (room.server, room.id)
 
     if identifier not in _last_messages.messages:
         return
 
     for msg_id in itertools.islice(reversed(_last_messages.messages[identifier]), count):
-        yield room._client.get_message(msg_id)
+        yield _client.get_message(msg_id, room.server)
 
 
 def get_report_data(message):
-    identifier = (message._client.host, message.id)
+    identifier = (message.server, message.id)
 
     if identifier in _last_messages.reports:
         return _last_messages.reports[identifier]
     else:
-        post_url = fetch_post_url_from_msg_content(message.content_source)
+        post_url = fetch_post_url_from_msg_content(message.content_source(client=_client))
 
         if post_url:
-            return (post_url, fetch_owner_url_from_msg_content(message.content_source))
+            return post_url, fetch_owner_url_from_msg_content(message.content_source(client=_client))
 
 
 def is_privileged(user, room):
-    return user.id in _privileges[(room._client.host, room.id)] or user.is_moderator
+    return user.id in _privileges[(room.server, room.id)] or user.is_moderator
 
 
 def block_room(room_id, site, time):
@@ -372,7 +345,7 @@ def command(*type_signature, reply=False, whole_msg=False, privileged=False, ari
 
     def decorator(func):
         def f(*args, original_msg=None, alias_used=None, quiet_action=False):
-            if privileged and not is_privileged(original_msg.owner, original_msg.room):
+            if privileged and not is_privileged(original_msg.user, original_msg.room):
                 return GlobalVars.not_privileged_warning
 
             if whole_msg:
@@ -488,11 +461,11 @@ def dispatch_reply_command(msg, reply, full_cmd):
             args.extend([None] * (max_arity - len(args)))
 
             return func(msg, *args, original_msg=reply, alias_used=cmd, quiet_action=quiet_action)
-    elif is_privileged(reply.owner, reply.room):
+    elif is_privileged(reply.user, reply.room):
         post_data = get_report_data(msg)
 
         if post_data:
-            Tasks.do(metasmoke.Metasmoke.post_auto_comment, full_cmd, reply.owner, url=post_data[0])
+            Tasks.do(metasmoke.Metasmoke.post_auto_comment, full_cmd, reply.owuserner, url=post_data[0])
 
 
 def dispatch_shorthand_command(msg):
