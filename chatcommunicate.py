@@ -268,7 +268,7 @@ def tell_rooms(msg, has, hasnt, notify_site="", report_data=None):
                     deletion_watcher = room in _watcher_rooms
 
                     new_room = Room(site, room_id=roomid)
-                    _client.join(site, room=new_room)
+                    _client.join(roomid, site)
 
                     _rooms[room] = RoomData(new_room, -1, deletion_watcher)
 
